@@ -606,6 +606,131 @@ const char *TextFormat(const char *text, ...); // Formatting of text with variab
 //void EnableCursor(void)
 //void DisableCursor(void)
 
+// Initialize only everything but the viewport
+void InitNoWindow(int width, int height, const char *title, void *loader)
+{
+    TRACELOG(LOG_INFO, "Initializing raylib %s", RAYLIB_VERSION);
+
+#if defined(PLATFORM_DESKTOP_GLFW)
+    TRACELOG(LOG_INFO, "Platform backend: DESKTOP (GLFW)");
+#elif defined(PLATFORM_DESKTOP_SDL)
+    TRACELOG(LOG_INFO, "Platform backend: DESKTOP (SDL)");
+#elif defined(PLATFORM_DESKTOP_RGFW)
+    TRACELOG(LOG_INFO, "Platform backend: DESKTOP (RGFW)");
+#elif defined(PLATFORM_DESKTOP_WIN32)
+    TRACELOG(LOG_INFO, "Platform backend: DESKTOP (WIN32)");
+#elif defined(PLATFORM_WEB_RGFW)
+    TRACELOG(LOG_INFO, "Platform backend: WEB (RGFW) (HTML5)");
+#elif defined(PLATFORM_WEB)
+    TRACELOG(LOG_INFO, "Platform backend: WEB (HTML5)");
+#elif defined(PLATFORM_DRM)
+    TRACELOG(LOG_INFO, "Platform backend: NATIVE DRM");
+#elif defined(PLATFORM_ANDROID)
+    TRACELOG(LOG_INFO, "Platform backend: ANDROID");
+#else
+    // TODO: Include your custom platform backend!
+    // i.e software rendering backend or console backend!
+    TRACELOG(LOG_INFO, "Platform backend: CUSTOM");
+#endif
+
+    TRACELOG(LOG_INFO, "Supported raylib modules:");
+    TRACELOG(LOG_INFO, "    > rcore:..... loaded (mandatory)");
+    TRACELOG(LOG_INFO, "    > rlgl:...... loaded (mandatory)");
+#if defined(SUPPORT_MODULE_RSHAPES)
+    TRACELOG(LOG_INFO, "    > rshapes:... loaded (optional)");
+#else
+    TRACELOG(LOG_INFO, "    > rshapes:... not loaded (optional)");
+#endif
+#if defined(SUPPORT_MODULE_RTEXTURES)
+    TRACELOG(LOG_INFO, "    > rtextures:. loaded (optional)");
+#else
+    TRACELOG(LOG_INFO, "    > rtextures:. not loaded (optional)");
+#endif
+#if defined(SUPPORT_MODULE_RTEXT)
+    TRACELOG(LOG_INFO, "    > rtext:..... loaded (optional)");
+#else
+    TRACELOG(LOG_INFO, "    > rtext:..... not loaded (optional)");
+#endif
+#if defined(SUPPORT_MODULE_RMODELS)
+    TRACELOG(LOG_INFO, "    > rmodels:... loaded (optional)");
+#else
+    TRACELOG(LOG_INFO, "    > rmodels:... not loaded (optional)");
+#endif
+#if defined(SUPPORT_MODULE_RAUDIO)
+    TRACELOG(LOG_INFO, "    > raudio:.... loaded (optional)");
+#else
+    TRACELOG(LOG_INFO, "    > raudio:.... not loaded (optional)");
+#endif
+
+    // Initialize window data
+    CORE.Window.screen.width = width;
+    CORE.Window.screen.height = height;
+    CORE.Window.currentFbo.width = CORE.Window.screen.width;
+    CORE.Window.currentFbo.height = CORE.Window.screen.height;
+
+    CORE.Window.eventWaiting = false;
+    CORE.Window.screenScale = MatrixIdentity(); // No draw scaling required by default
+    if ((title != NULL) && (title[0] != 0)) CORE.Window.title = title;
+
+    // Initialize global input state
+    memset(&CORE.Input, 0, sizeof(CORE.Input)); // Reset CORE.Input structure to 0
+    CORE.Input.Keyboard.exitKey = KEY_ESCAPE;
+    CORE.Input.Mouse.scale = (Vector2){ 1.0f, 1.0f };
+    CORE.Input.Mouse.cursor = MOUSE_CURSOR_ARROW;
+    CORE.Input.Gamepad.lastButtonPressed = GAMEPAD_BUTTON_UNKNOWN;
+
+    // Initialize Extensions
+    //--------------------------------------------------------------
+    rlLoadExtensions(loader);
+    //--------------------------------------------------------------
+
+    // Initialize rlgl default data (buffers and shaders)
+    // NOTE: Current fbo size stored as globals in rlgl for convenience
+    rlglInit(CORE.Window.currentFbo.width, CORE.Window.currentFbo.height);
+    isGpuReady = true; // Flag to note GPU has been initialized successfully
+
+    // Setup default viewport
+    //SetupViewport(CORE.Window.currentFbo.width, CORE.Window.currentFbo.height);
+
+#if defined(SUPPORT_MODULE_RTEXT)
+    #if defined(SUPPORT_DEFAULT_FONT)
+        // Load default font
+        // WARNING: External function: Module required: rtext
+        LoadFontDefault();
+        #if defined(SUPPORT_MODULE_RSHAPES)
+        // Set font white rectangle for shapes drawing, so shapes and text can be batched together
+        // WARNING: rshapes module is required, if not available, default internal white rectangle is used
+        Rectangle rec = GetFontDefault().recs[95];
+        if (FLAG_IS_SET(CORE.Window.flags, FLAG_MSAA_4X_HINT))
+        {
+            // NOTE: We try to maxime rec padding to avoid pixel bleeding on MSAA filtering
+            SetShapesTexture(GetFontDefault().texture, (Rectangle){ rec.x + 2, rec.y + 2, 1, 1 });
+        }
+        else
+        {
+            // NOTE: We set up a 1px padding on char rectangle to avoid pixel bleeding
+            SetShapesTexture(GetFontDefault().texture, (Rectangle){ rec.x + 1, rec.y + 1, rec.width - 2, rec.height - 2 });
+        }
+        #endif
+    #endif
+#else
+    #if defined(SUPPORT_MODULE_RSHAPES)
+    // Set default texture and rectangle to be used for shapes drawing
+    // NOTE: rlgl default texture is a 1x1 pixel UNCOMPRESSED_R8G8B8A8
+    Texture2D texture = { rlGetTextureIdDefault(), 1, 1, 1, PIXELFORMAT_UNCOMPRESSED_R8G8B8A8 };
+    SetShapesTexture(texture, (Rectangle){ 0.0f, 0.0f, 1.0f, 1.0f });    // WARNING: Module required: rshapes
+    #endif
+#endif
+
+    CORE.Time.frameCounter = 0;
+    CORE.Window.shouldClose = false;
+
+    // Initialize random seed
+    SetRandomSeed((unsigned int)time(NULL));
+
+    TRACELOG(LOG_INFO, "SYSTEM: Working Directory: %s", GetWorkingDirectory());
+}
+
 // Initialize window and OpenGL context
 void InitWindow(int width, int height, const char *title)
 {
@@ -735,6 +860,18 @@ void InitWindow(int width, int height, const char *title)
     SetRandomSeed((unsigned int)time(NULL));
 
     TRACELOG(LOG_INFO, "SYSTEM: Working Directory: %s", GetWorkingDirectory());
+}
+
+// Close window and unload OpenGL context
+void CloseNoWindow(void) {
+    #if defined(SUPPORT_MODULE_RTEXT) && defined(SUPPORT_DEFAULT_FONT)
+        UnloadFontDefault();        // WARNING: Module required: rtext
+    #endif
+
+    rlglClose();                // De-init rlgl
+
+    CORE.Window.ready = false;
+    TRACELOG(LOG_INFO, "Window closed successfully");
 }
 
 // Close window and unload OpenGL context
